@@ -4,6 +4,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.Azure.Search;
+using Microsoft.Azure.Search.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -53,6 +54,12 @@ namespace EFAzure
                 {
                     Console.WriteLine($"{customer.CustomerId} - {customer.CompanyName} - {customer.City}");
                 }
+
+                var anatr = context.Customers.Single(c => c.CustomerId == "ANATR");
+
+                anatr.CompanyName = "Long Island Ice Tea Inc.";
+
+                context.SaveChanges();
             }
 
             Console.ReadKey();
@@ -85,6 +92,45 @@ namespace EFAzure
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
             => modelBuilder.Entity<Customer>().ToTable("Customers");
+
+        public override int SaveChanges(bool acceptAllChangesOnSuccess)
+        {
+            var entityEntries
+                = ChangeTracker.Entries()
+                    .Where(ee => ee.State == EntityState.Modified).ToList();
+
+            var rows = base.SaveChanges(acceptAllChangesOnSuccess);
+
+            if (rows > 0)
+            {
+                using (var searchIndexClient
+                    = new SearchIndexClient(
+                        "anpete-ef",
+                        "customers-index",
+                        new SearchCredentials("F16FAAFD3DD5F4F20E317F67DBE94406")))
+                {
+                    var documents = new List<Document>();
+
+                    foreach (var entityEntry in entityEntries)
+                    {
+                        var document
+                            = new Document
+                            {
+                                ["CustomerID"] = entityEntry.Property("CustomerId").OriginalValue,
+                                ["CompanyName"] = entityEntry.Property("CompanyName").CurrentValue
+                            };
+
+                        documents.Add(document);
+                    }
+
+                    var indexBatch = IndexBatch.MergeOrUpload(documents);
+
+                    searchIndexClient.Documents.Index(indexBatch);
+                }
+            }
+
+            return rows;
+        }
     }
 
     public sealed class AzureSearchRelationalCompositeExpressionFragmentTranslator
